@@ -16,8 +16,6 @@ int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
-static void freeproc(struct proc *p);
-
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
 // memory model when using p->parent.
@@ -38,7 +36,7 @@ procinit(void)
       panic("kalloc");
     initlock(&p->lock, "proc");
     p->state = UNUSED;
-    p->kstack = KSTACK((int) (p - proc));
+    p->kstack = (uint64) pa;
   }
 }
 
@@ -118,23 +116,6 @@ found:
   return p;
 }
 
-// free a proc structure and the data hanging from it,
-// including user pages.
-// p->lock must be held.
-static void
-freeproc(struct proc *p)
-{
-  p->pagetable = 0;
-  p->sz = 0;
-  p->pid = 0;
-  p->parent = 0;
-  p->name[0] = 0;
-  p->chan = 0;
-  p->killed = 0;
-  p->xstate = 0;
-  p->state = UNUSED;
-}
-
 // a user program that calls exec("/init")
 // assembled from ../user/initcode.S
 // od -t xC ../user/initcode
@@ -164,38 +145,14 @@ void
 userinit(void)
 {
   struct proc *p;
-
-  p = allocproc();
-  initproc = p;
-
-  safestrcpy(p->name, "initcode", sizeof(p->name));
-  p->cwd = namei("/");
-
-  p->state = RUNNABLE;
-
-  release(&p->lock);
-}
-
-// Grow or shrink user memory by n bytes.
-// Return 0 on success, -1 on failure.
-int
-growproc(int n)
-{
-  uint64 sz;
-  struct proc *p = myproc();
-
-  sz = p->sz;
-  if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
-      return -1;
-    }
-  } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+  for(p = proc; p < &proc[NPROC]; p++) {
+    p = allocproc();
+    safestrcpy(p->name, "init", sizeof(p->name));
+    p->state = RUNNABLE;
+    release(&p->lock);
   }
-  p->sz = sz;
-  return 0;
-}
 
+}
 
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -277,18 +234,9 @@ yield(void)
 void
 forkret(void)
 {
-  static int first = 1;
-
   // Still holding p->lock from scheduler.
   release(&myproc()->lock);
-
-  if (first) {
-    // File system initialization must be run in the context of a
-    // regular process (e.g., because it calls sleep), and thus cannot
-    // be run from main().
-    first = 0;
-    fsinit(ROOTDEV);
-  }
+  do_my_bidding();
 }
 
 // Kill the process with the given pid.
